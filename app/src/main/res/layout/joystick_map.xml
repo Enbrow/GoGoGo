@@ -37,7 +37,7 @@
         android:src="@drawable/ic_close"
         android:theme="@style/RippleWhite" />
 
-    <FrameLayout
+    <com.zcshou.joystick.CompassMapContainer
         android:layout_marginTop="40dp"
         android:layout_width="match_parent"
         android:layout_height="450dp">
@@ -84,5 +84,5 @@
             </ListView>
         </LinearLayout>
 
-    </FrameLayout>
+    </com.zcshou.joystick.CompassMapContainer>
 </FrameLayout>
