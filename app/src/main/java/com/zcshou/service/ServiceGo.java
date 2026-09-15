@@ -38,6 +38,7 @@ public class ServiceGo extends Service {
     public static final double DEFAULT_LNG = 117.027707;
     public static final double DEFAULT_ALT = 55.0D;
     public static final float DEFAULT_BEA = 0.0F;
+    private static final String FUSED_PROVIDER = "fused";
     private double mCurLat = DEFAULT_LAT;
     private double mCurLng = DEFAULT_LNG;
     private double mCurAlt = DEFAULT_ALT;
@@ -78,6 +79,9 @@ public class ServiceGo extends Service {
         removeTestProviderGPS();
         addTestProviderGPS();
 
+        removeTestProviderFused();
+        addTestProviderFused();
+
         initGoLocation();
 
         initNotification();
@@ -106,6 +110,7 @@ public class ServiceGo extends Service {
 
         removeTestProviderNetwork();
         removeTestProviderGPS();
+        removeTestProviderFused();
 
         unregisterReceiver(mActReceiver);
         stopForeground(STOP_FOREGROUND_REMOVE);
@@ -189,6 +194,7 @@ public class ServiceGo extends Service {
                     if (!isStop) {
                         setLocationNetwork();
                         setLocationGPS();
+                        setLocationFused();
 
                         sendEmptyMessage(HANDLER_MSG_ID);
                     }
@@ -304,6 +310,56 @@ public class ServiceGo extends Service {
             mLocManager.setTestProviderLocation(LocationManager.NETWORK_PROVIDER, loc);
         } catch (Exception e) {
             XLog.e("SERVICEGO: ERROR - setLocationNetwork");
+        }
+    }
+
+    private void removeTestProviderFused() {
+        try {
+            if (mLocManager.getAllProviders().contains(FUSED_PROVIDER)) {
+                mLocManager.setTestProviderEnabled(FUSED_PROVIDER, false);
+                mLocManager.removeTestProvider(FUSED_PROVIDER);
+            }
+        } catch (Exception e) {
+            XLog.e("SERVICEGO: ERROR - removeTestProviderFused");
+        }
+    }
+
+    @SuppressLint("wrongconstant")
+    private void addTestProviderFused() {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                mLocManager.addTestProvider(FUSED_PROVIDER, false, false, false,
+                        false, true, true, true,
+                        ProviderProperties.POWER_USAGE_LOW, ProviderProperties.ACCURACY_FINE);
+            } else {
+                mLocManager.addTestProvider(FUSED_PROVIDER, false, false, false,
+                        false, true, true, true,
+                        Criteria.POWER_LOW, Criteria.ACCURACY_FINE);
+            }
+            if (!mLocManager.isProviderEnabled(FUSED_PROVIDER)) {
+                mLocManager.setTestProviderEnabled(FUSED_PROVIDER, true);
+            }
+        } catch (Exception e) {
+            XLog.e("SERVICEGO: ERROR - addTestProviderFused");
+        }
+    }
+
+    private void setLocationFused() {
+        try {
+            // 向融合定位 Provider 同步提交与 GPS/NETWORK 相同的 WGS84 模拟位置。
+            Location loc = new Location(FUSED_PROVIDER);
+            loc.setAccuracy(Criteria.ACCURACY_FINE);
+            loc.setAltitude(mCurAlt);
+            loc.setBearing(mCurBea);
+            loc.setLatitude(mCurLat);
+            loc.setLongitude(mCurLng);
+            loc.setTime(System.currentTimeMillis());
+            loc.setSpeed((float) mSpeed);
+            loc.setElapsedRealtimeNanos(SystemClock.elapsedRealtimeNanos());
+
+            mLocManager.setTestProviderLocation(FUSED_PROVIDER, loc);
+        } catch (Exception e) {
+            XLog.e("SERVICEGO: ERROR - setLocationFused");
         }
     }
 

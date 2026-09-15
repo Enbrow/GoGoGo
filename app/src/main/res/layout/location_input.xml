@@ -48,7 +48,8 @@
         android:inputType="text"
         android:maxLines="1"
         android:minHeight="48dp"
-        android:singleLine="true" />
+        android:singleLine="true"
+        android:textColorHint="#9E9E9E" />
 
     <LinearLayout
         android:id="@+id/coordinate_separate_container"
@@ -65,7 +66,8 @@
             android:digits="-0123456789."
             android:hint="@string/label_longitude"
             android:inputType="numberDecimal"
-            android:minHeight="48dp" />
+            android:minHeight="48dp"
+            android:textColorHint="#9E9E9E" />
 
         <EditText
             android:id="@+id/joystick_latitude"
@@ -75,7 +77,8 @@
             android:digits="-0123456789."
             android:hint="@string/label_latitude"
             android:inputType="numberDecimal"
-            android:minHeight="48dp" />
+            android:minHeight="48dp"
+            android:textColorHint="#9E9E9E" />
     </LinearLayout>
 
     <TextView
