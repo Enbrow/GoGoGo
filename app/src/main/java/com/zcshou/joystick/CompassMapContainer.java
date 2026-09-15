@@ -11,7 +11,7 @@ import com.baidu.mapapi.map.MapView;
 import com.zcshou.gogogo.R;
 
 /**
- * Hosts the floating Baidu map and gives it Google-Maps-like compass behavior:
+ * Hosts a Baidu map and gives it Google-Maps-like compass behavior:
  * the compass is hidden while the map faces north, appears after rotation or
  * tilt, and the SDK's built-in compass restores the default north-up view when
  * tapped.
@@ -43,6 +43,9 @@ public class CompassMapContainer extends FrameLayout {
     private void initCompass() {
         MapView mapView = findViewById(R.id.map_joystick);
         if (mapView == null) {
+            mapView = findViewById(R.id.bdMapView);
+        }
+        if (mapView == null) {
             return;
         }
 
@@ -51,7 +54,7 @@ public class CompassMapContainer extends FrameLayout {
             return;
         }
 
-        // Keep the compass clearly visible inside the small floating map.
+        // Keep the compass clearly visible near the top-left on both map layouts.
         int compassOffset = Math.round(36.0f * getResources().getDisplayMetrics().density);
         mBaiduMap.setCompassPosition(new Point(compassOffset, compassOffset));
 

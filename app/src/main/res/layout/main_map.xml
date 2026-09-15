@@ -12,12 +12,18 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
-        <com.baidu.mapapi.map.MapView
-            android:id="@+id/bdMapView"
-            android:layout_width="fill_parent"
-            android:layout_height="fill_parent"
-            android:clickable="true"
-            android:focusable="true" />
+        <com.zcshou.joystick.CompassMapContainer
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <com.baidu.mapapi.map.MapView
+                android:id="@+id/bdMapView"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clickable="true"
+                android:focusable="true" />
+
+        </com.zcshou.joystick.CompassMapContainer>
 
         <RadioGroup
             android:id="@+id/RadioGroupMapType"
@@ -100,7 +106,6 @@
             android:theme="@style/RippleWhite"
             app:srcCompat="@drawable/ic_input"
             app:tint="@color/colorAccent" />
-
 
         <TextView
             android:layout_width="match_parent"
