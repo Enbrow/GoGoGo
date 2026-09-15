@@ -1,5 +1,8 @@
 package com.zcshou.gogogo;
 
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
@@ -35,6 +38,7 @@ import java.util.Map;
 
 import com.zcshou.database.DataBaseHistoryLocation;
 import com.zcshou.utils.GoUtils;
+import com.zcshou.utils.MapUtils;
 
 public class HistoryActivity extends BaseActivity {
     public static final String KEY_ID = "KEY_ID";
@@ -159,8 +163,8 @@ public class HistoryActivity extends BaseActivity {
                 item.put(KEY_ID, Integer.toString(ID));
                 item.put(KEY_LOCATION, Location);
                 item.put(KEY_TIME, GoUtils.timeStamp2Date(Long.toString(TimeStamp)));
-                item.put(KEY_LNG_LAT_WGS, "[经度:" + doubleLongitude + " 纬度:" + doubleLatitude + "]");
-                item.put(KEY_LNG_LAT_CUSTOM, "[经度:" + doubleBDLongitude + " 纬度:" + doubleBDLatitude + "]");
+                item.put(KEY_LNG_LAT_WGS, "WGS84 [经度:" + doubleLongitude + " 纬度:" + doubleLatitude + "]");
+                item.put(KEY_LNG_LAT_CUSTOM, "BD-09 [经度:" + doubleBDLongitude + " 纬度:" + doubleBDLatitude + "]");
                 data.add(item);
             }
             cursor.close();
@@ -261,6 +265,27 @@ public class HistoryActivity extends BaseActivity {
         });
     }
 
+    private String[] parseCoordinateText(String coordinateText) {
+        String body = coordinateText.substring(coordinateText.indexOf('[') + 1, coordinateText.indexOf(']'));
+        String[] parts = body.split(" ");
+        String longitude = parts[0].substring(parts[0].indexOf(':') + 1);
+        String latitude = parts[1].substring(parts[1].indexOf(':') + 1);
+        return new String[] {longitude, latitude};
+    }
+
+    private void copyCoordinate(TextView coordinateView, String label) {
+        try {
+            String[] coordinate = parseCoordinateText(coordinateView.getText().toString());
+            // 与历史记录的显示顺序一致：经度,纬度
+            String text = coordinate[0] + "," + coordinate[1];
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            clipboard.setPrimaryClip(ClipData.newPlainText(label, text));
+            GoUtils.DisplayToast(this, label + " 已复制");
+        } catch (Exception e) {
+            Log.e("HistoryActivity", "ERROR - copy coordinate", e);
+        }
+    }
+
     private void showDeleteDialog(String locID) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
         builder.setTitle("警告");
@@ -319,24 +344,25 @@ public class HistoryActivity extends BaseActivity {
         mSearchLayout = findViewById(R.id.search_linear);
         mRecordListView = findViewById(R.id.record_list_view);
         mRecordListView.setOnItemClickListener((adapterView, view, i, l) -> {
-            String bd09Longitude;
-            String bd09Latitude;
-            String name;
-            name = (String) ((TextView) view.findViewById(R.id.LocationText)).getText();
-            String bd09LatLng = (String) ((TextView) view.findViewById(R.id.BDLatLngText)).getText();
-            bd09LatLng = bd09LatLng.substring(bd09LatLng.indexOf('[') + 1, bd09LatLng.indexOf(']'));
-            String[] latLngStr = bd09LatLng.split(" ");
-            bd09Longitude = latLngStr[0].substring(latLngStr[0].indexOf(':') + 1);
-            bd09Latitude = latLngStr[1].substring(latLngStr[1].indexOf(':') + 1);
+            String name = (String) ((TextView) view.findViewById(R.id.LocationText)).getText();
+            String[] wgs84 = parseCoordinateText(((TextView) view.findViewById(R.id.WGSLatLngText)).getText().toString());
+            String[] bd09 = parseCoordinateText(((TextView) view.findViewById(R.id.BDLatLngText)).getText().toString());
+            String wgs84Longitude = wgs84[0];
+            String wgs84Latitude = wgs84[1];
+            String bd09Longitude = bd09[0];
+            String bd09Latitude = bd09[1];
 
-            // Random offset
+            // Random offset is applied to the actual WGS84 mock position.
             if(sharedPreferences.getBoolean("setting_random_offset", false)) {
-                String[] offsetResult = randomOffset(bd09Longitude, bd09Latitude);
-                bd09Longitude = offsetResult[0];
-                bd09Latitude = offsetResult[1];
+                String[] offsetResult = randomOffset(wgs84Longitude, wgs84Latitude);
+                wgs84Longitude = offsetResult[0];
+                wgs84Latitude = offsetResult[1];
+                double[] bdLonLat = MapUtils.wgs2bd09(Double.parseDouble(wgs84Longitude), Double.parseDouble(wgs84Latitude));
+                bd09Longitude = String.valueOf(bdLonLat[0]);
+                bd09Latitude = String.valueOf(bdLonLat[1]);
             }
 
-            if (!MainActivity.showLocation(name, bd09Longitude, bd09Latitude)) {
+            if (!MainActivity.showLocation(name, wgs84Longitude, wgs84Latitude, bd09Longitude, bd09Latitude)) {
                 GoUtils.DisplayToast(this, getResources().getString(R.string.history_error_location));
             }
             this.finish();
@@ -345,6 +371,8 @@ public class HistoryActivity extends BaseActivity {
         mRecordListView.setOnItemLongClickListener((parent, view, position, id) -> {
             PopupMenu popupMenu = new PopupMenu(HistoryActivity.this, view);
             popupMenu.setGravity(Gravity.END | Gravity.BOTTOM);
+            popupMenu.getMenu().add("复制WGS84");
+            popupMenu.getMenu().add("复制BD09");
             popupMenu.getMenu().add("编辑");
             popupMenu.getMenu().add("删除");
 
@@ -352,6 +380,12 @@ public class HistoryActivity extends BaseActivity {
                 String locID = ((TextView) view.findViewById(R.id.LocationID)).getText().toString();
                 String name = ((TextView) view.findViewById(R.id.LocationText)).getText().toString();
                 switch (item.getTitle().toString()) {
+                    case "复制WGS84":
+                        copyCoordinate(view.findViewById(R.id.WGSLatLngText), "WGS84");
+                        return true;
+                    case "复制BD09":
+                        copyCoordinate(view.findViewById(R.id.BDLatLngText), "BD09");
+                        return true;
                     case "编辑":
                         showInputDialog(locID, name);
                         return true;

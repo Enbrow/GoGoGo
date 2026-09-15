@@ -43,6 +43,6 @@
         android:layout_height="wrap_content"
         android:ellipsize="end"
         android:lines="1"
-        android:visibility="gone" />
+         />
 
 </LinearLayout>

@@ -55,6 +55,10 @@ public class WelcomeActivity extends AppCompatActivity {
         startBtn.setOnClickListener(v -> startMainActivity());
 
         checkAgreementAndPrivacy();
+
+        // 已经完成协议确认和权限授权时，启动后直接进入主界面。
+        // 第一次安装或权限缺失时仍保留原来的欢迎页和授权流程。
+        tryStartMainActivityAutomatically();
     }
 
     @Override
@@ -81,17 +85,20 @@ public class WelcomeActivity extends AppCompatActivity {
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         if (requestCode == SDK_PERMISSION_REQUEST) {
             for (int i = 0; i < ReqPermissions.size(); i++) {
-                if (grantResults[i] != PackageManager.PERMISSION_GRANTED) {
+                if (i >= grantResults.length || grantResults[i] != PackageManager.PERMISSION_GRANTED) {
                     GoUtils.DisplayToast(this, getResources().getString(R.string.app_error_permission));
                     return;
                 }
             }
             isPermission = true;
+            tryStartMainActivityAutomatically();
         }
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
     }
 
     private void checkDefaultPermissions() {
+        ReqPermissions.clear();
+
         // 定位精确位置
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             ReqPermissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
@@ -117,6 +124,7 @@ public class WelcomeActivity extends AppCompatActivity {
         if (ReqPermissions.isEmpty()) {
             isPermission = true;
         } else {
+            isPermission = false;
             requestPermissions(ReqPermissions.toArray(new String[0]), SDK_PERMISSION_REQUEST);
         }
     }
@@ -138,18 +146,36 @@ public class WelcomeActivity extends AppCompatActivity {
         }
 
         if (isPermission) {
-            Intent intent = new Intent(WelcomeActivity.this, MainActivity.class);
-            startActivity(intent);
-            WelcomeActivity.this.finish();
+            launchMainActivity();
         } else {
             checkDefaultPermissions();
         }
+    }
+
+    private void tryStartMainActivityAutomatically() {
+        if (!Boolean.TRUE.equals(mAgreement) || !Boolean.TRUE.equals(mPrivacy) || !isPermission) {
+            return;
+        }
+
+        // 保留原版进入应用前的网络/GPS要求，避免改变主功能的运行前提。
+        if (!GoUtils.isNetworkAvailable(this) || !GoUtils.isGpsOpened(this)) {
+            return;
+        }
+
+        launchMainActivity();
+    }
+
+    private void launchMainActivity() {
+        Intent intent = new Intent(WelcomeActivity.this, MainActivity.class);
+        startActivity(intent);
+        WelcomeActivity.this.finish();
     }
 
     private void doAcceptation() {
         if (mAgreement && mPrivacy) {
             checkBox.setChecked(true);
             checkDefaultPermissions();
+            tryStartMainActivityAutomatically();
         } else {
             checkBox.setChecked(false);
         }

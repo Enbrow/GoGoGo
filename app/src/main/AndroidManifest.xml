@@ -61,10 +61,10 @@
             android:name="org.apache.http.legacy"
             android:required="false" />
 
-        <!-- 百度地图开发者 Key -->
+        <!-- 百度地图开发者 Key：与官方 1.12.3 APK 保持一致 -->
         <meta-data
             android:name="com.baidu.lbsapi.API_KEY"
-            android:value="fb7YwlKY3ntx8hBDGMGLqX2FhlPkDMvv" />
+            android:value="P9I4SjSfRtFenM1hLTyZwoW3YLnmtSda" />
 
         <!-- 百度地图 间隔定位必须配置此service否则功能无效 -->
         <service

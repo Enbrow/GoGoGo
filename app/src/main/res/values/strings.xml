@@ -118,8 +118,15 @@
     <string name="label_latitude">纬度</string>
     <string name="input_position_ok">传送</string>
     <string name="input_position_cancel">取消</string>
-    <string name="input_position_baidu">BD09 坐标系</string>
-    <string name="input_position_gps">GPS 坐标系</string>
+    <string name="input_position_baidu">BD09（百度）</string>
+    <string name="input_position_gps">WGS84（Google/海外）</string>
+    <string name="input_position_wgs_short">WGS84</string>
+    <string name="input_format_title">输入格式</string>
+    <string name="input_format_lat_lng">纬度, 经度</string>
+    <string name="input_format_lng_lat">经度, 纬度</string>
+    <string name="input_format_separate">经度 / 纬度（分开输入）</string>
+    <string name="input_coordinate_pair_hint">39.9073, 116.39135</string>
+    <string name="input_coordinate_system_title">坐标系</string>
     <string name="input_button">输入位置</string>
     <string name="cur_position">返回当前位置</string>
     <string name="zoom_in">放大</string>
@@ -129,7 +136,7 @@
     <string name="map_pic_sate">卫星图</string>
     <string name="map_pic_normal">普通图</string>
     <string name="safecode">32:2F:E6:05:6C:2F:11:6D:CD:ED:AC:FF:23:02:5A:29:68:FD:45:D2;com.zcshou.gogogo</string>
-    <string name="ak">fb7YwlKY3ntx8hBDGMGLqX2FhlPkDMvv</string>
+    <string name="ak">P9I4SjSfRtFenM1hLTyZwoW3YLnmtSda</string>
 
     <!-- 更新 -->
     <string name="update_title">新版本可用</string>

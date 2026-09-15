@@ -137,6 +137,8 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     private MapView mMapView;
     private static BaiduMap mBaiduMap = null;
     private static LatLng mMarkLatLngMap = new LatLng(36.547743718042415, 117.07018449827267); // 当前标记的地图点
+    private static LatLng mMarkLatLngWgs84 = null; // 精确的 WGS84 坐标，用于模拟定位
+    private static LatLng mMarkLatLngBd09 = null;  // BD09 兼容坐标，用于历史记录
     private static String mMarkName = null;
     private GeoCoder mGeoCoder;
     private SensorManager mSensorManager;
@@ -621,7 +623,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
              */
             @Override
             public void onMapClick(LatLng point) {
-                mMarkLatLngMap = point;
+                setMarkFromMapCoordinate(point);
                 markMap();
 
                 //百度坐标系转wgs坐标系
@@ -632,7 +634,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
              */
             @Override
             public void onMapPoiClick(MapPoi poi) {
-                mMarkLatLngMap = poi.getPosition();
+                setMarkFromMapCoordinate(poi.getPosition());
                 markMap();
                 //百度坐标系转wgs坐标系
                 // transformCoordinate(String.valueOf(poi.getPosition().longitude), String.valueOf(poi.getPosition().latitude));
@@ -644,7 +646,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
              */
             @Override
             public void onMapLongClick(LatLng point) {
-                mMarkLatLngMap = point;
+                setMarkFromMapCoordinate(point);
                 markMap();
                 mGeoCoder.reverseGeoCode(new ReverseGeoCodeOption().location(point));
                 //百度坐标系转wgs坐标系
@@ -752,7 +754,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                         if (isFirstLoc) {
                             isFirstLoc = false;
                             // 这里记录百度地图返回的位置
-                            mMarkLatLngMap = new LatLng(bdLocation.getLatitude(), bdLocation.getLongitude());
+                            setMarkFromMapCoordinate(new LatLng(bdLocation.getLatitude(), bdLocation.getLongitude()));
                             MapStatus.Builder builder = new MapStatus.Builder();
                             builder.target(mMarkLatLngMap).zoom(18.0f);
                             mBaiduMap.animateMapStatus(MapStatusUpdateFactory.newMapStatus(builder.build()));
@@ -817,6 +819,193 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         return locationOption;
     }
 
+    // 百度地图 SDK 在中国境内使用 BD09，在海外地区直接使用 WGS84。
+    // 这里沿用项目原有的中国范围判断。东京等日本地区会走海外 WGS84 路径。
+    private static boolean isOutsideChina(double lng, double lat) {
+        // Japan, Korea and the surrounding overseas map area. This explicitly
+        // covers Tokyo, Osaka, Kyushu, Hokkaido and Okinawa.
+        boolean eastAsiaOverseas = lng >= 122.5 && lng <= 146.5 && lat >= 20.0 && lat <= 46.5;
+        return eastAsiaOverseas
+                || (lng < 72.004 || lng > 137.8347)
+                || (lat < 0.8293 || lat > 55.8271);
+    }
+
+    private static void setMarkFromWgs84(double lng, double lat) {
+        mMarkLatLngWgs84 = new LatLng(lat, lng);
+        double[] bdLonLat = MapUtils.wgs2bd09(lng, lat);
+        mMarkLatLngBd09 = new LatLng(bdLonLat[1], bdLonLat[0]);
+
+        // 海外百度地图直接使用 WGS84；中国境内使用 BD09。
+        mMarkLatLngMap = isOutsideChina(lng, lat) ? mMarkLatLngWgs84 : mMarkLatLngBd09;
+    }
+
+    private static void setMarkFromBd09(double lng, double lat) {
+        mMarkLatLngBd09 = new LatLng(lat, lng);
+        double[] wgsLonLat = MapUtils.bd2wgs(lng, lat);
+        mMarkLatLngWgs84 = new LatLng(wgsLonLat[1], wgsLonLat[0]);
+
+        // 对海外的“BD09兼容坐标”，先恢复为 WGS84 再在地图上打点。
+        mMarkLatLngMap = isOutsideChina(wgsLonLat[0], wgsLonLat[1]) ? mMarkLatLngWgs84 : mMarkLatLngBd09;
+    }
+
+    private static void setMarkFromMapCoordinate(LatLng point) {
+        mMarkLatLngMap = point;
+        if (isOutsideChina(point.longitude, point.latitude)) {
+            // 百度地图海外输出就是 WGS84。
+            mMarkLatLngWgs84 = point;
+            double[] bdLonLat = MapUtils.wgs2bd09(point.longitude, point.latitude);
+            mMarkLatLngBd09 = new LatLng(bdLonLat[1], bdLonLat[0]);
+        } else {
+            // 中国境内百度地图输出为 BD09。
+            mMarkLatLngBd09 = point;
+            double[] wgsLonLat = MapUtils.bd2wgs(point.longitude, point.latitude);
+            mMarkLatLngWgs84 = new LatLng(wgsLonLat[1], wgsLonLat[0]);
+        }
+    }
+
+    private static void ensureMarkCoordinateRepresentations() {
+        if (mMarkLatLngMap != null && (mMarkLatLngWgs84 == null || mMarkLatLngBd09 == null)) {
+            setMarkFromMapCoordinate(mMarkLatLngMap);
+        }
+    }
+
+    private static double[] getMarkedWgs84() {
+        ensureMarkCoordinateRepresentations();
+        if (mMarkLatLngWgs84 == null) {
+            return new double[] {0.0, 0.0};
+        }
+        return new double[] {mMarkLatLngWgs84.longitude, mMarkLatLngWgs84.latitude};
+    }
+
+    private static void clearMarkCoordinates() {
+        mMarkLatLngMap = null;
+        mMarkLatLngWgs84 = null;
+        mMarkLatLngBd09 = null;
+    }
+
+    private static final int INPUT_FORMAT_LAT_LNG = 0;
+    private static final int INPUT_FORMAT_LNG_LAT = 1;
+    private static final int INPUT_FORMAT_SEPARATE = 2;
+
+    private static class ManualCoordinate {
+        final double longitude;
+        final double latitude;
+        final int format;
+        final boolean unambiguous;
+        final boolean autoSwapped;
+
+        ManualCoordinate(double longitude, double latitude, int format,
+                         boolean unambiguous, boolean autoSwapped) {
+            this.longitude = longitude;
+            this.latitude = latitude;
+            this.format = format;
+            this.unambiguous = unambiguous;
+            this.autoSwapped = autoSwapped;
+        }
+    }
+
+    private static double parseCoordinateNumber(String value) {
+        String normalized = value == null ? "" : value.trim();
+        if (normalized.isEmpty()) {
+            throw new IllegalArgumentException("请输入完整坐标");
+        }
+        try {
+            double result = Double.parseDouble(normalized);
+            if (Double.isNaN(result) || Double.isInfinite(result)) {
+                throw new NumberFormatException("non-finite");
+            }
+            return result;
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException("坐标格式不正确");
+        }
+    }
+
+    private static void validateLongitudeLatitude(double longitude, double latitude) {
+        if (longitude < -180.0 || longitude > 180.0) {
+            throw new IllegalArgumentException("经度必须在 -180～180 之间");
+        }
+        if (latitude < -90.0 || latitude > 90.0) {
+            throw new IllegalArgumentException("纬度必须在 -90～90 之间");
+        }
+    }
+
+    private static ManualCoordinate parseCombinedCoordinate(String raw, int selectedFormat) {
+        String normalized = raw == null ? "" : raw
+                .replace('，', ',')
+                .replace('\u3000', ' ')
+                .trim();
+        String[] parts = normalized.split("\\s*,\\s*", -1);
+        if (parts.length != 2) {
+            throw new IllegalArgumentException("请输入两个坐标，并用逗号分隔");
+        }
+
+        double first = parseCoordinateNumber(parts[0]);
+        double second = parseCoordinateNumber(parts[1]);
+        if (Math.abs(first) > 180.0 || Math.abs(second) > 180.0) {
+            throw new IllegalArgumentException("坐标超出有效范围");
+        }
+
+        boolean firstCanBeLatitude = Math.abs(first) <= 90.0;
+        boolean secondCanBeLatitude = Math.abs(second) <= 90.0;
+        int format = selectedFormat;
+        boolean unambiguous = false;
+
+        // If exactly one value is outside the latitude range, that value can
+        // only be longitude. This lets Google Maps strings such as
+        // "39.9073,116.39135" self-identify as latitude,longitude.
+        if (!firstCanBeLatitude && secondCanBeLatitude) {
+            format = INPUT_FORMAT_LNG_LAT;
+            unambiguous = true;
+        } else if (firstCanBeLatitude && !secondCanBeLatitude) {
+            format = INPUT_FORMAT_LAT_LNG;
+            unambiguous = true;
+        }
+
+        double latitude = format == INPUT_FORMAT_LAT_LNG ? first : second;
+        double longitude = format == INPUT_FORMAT_LAT_LNG ? second : first;
+        validateLongitudeLatitude(longitude, latitude);
+        return new ManualCoordinate(longitude, latitude, format, unambiguous, false);
+    }
+
+    private static ManualCoordinate parseSeparateCoordinate(String longitudeText, String latitudeText) {
+        double longitude = parseCoordinateNumber(longitudeText);
+        double latitude = parseCoordinateNumber(latitudeText);
+        boolean autoSwapped = false;
+
+        // If the values were obviously entered into the opposite fields, fix
+        // them automatically rather than sending the user to a wrong place.
+        if (Math.abs(latitude) > 90.0 && Math.abs(latitude) <= 180.0
+                && Math.abs(longitude) <= 90.0) {
+            double temp = longitude;
+            longitude = latitude;
+            latitude = temp;
+            autoSwapped = true;
+        }
+
+        validateLongitudeLatitude(longitude, latitude);
+        return new ManualCoordinate(longitude, latitude, INPUT_FORMAT_SEPARATE, false, autoSwapped);
+    }
+
+    private static int getSelectedInputFormat(int checkedId) {
+        if (checkedId == R.id.input_format_lng_lat) {
+            return INPUT_FORMAT_LNG_LAT;
+        }
+        if (checkedId == R.id.input_format_separate) {
+            return INPUT_FORMAT_SEPARATE;
+        }
+        return INPUT_FORMAT_LAT_LNG;
+    }
+
+    private static int getInputFormatRadioId(int format) {
+        if (format == INPUT_FORMAT_LNG_LAT) {
+            return R.id.input_format_lng_lat;
+        }
+        if (format == INPUT_FORMAT_SEPARATE) {
+            return R.id.input_format_separate;
+        }
+        return R.id.input_format_lat_lng;
+    }
+
     //地图上各按键的监听
     private void initMapButton() {
         RadioGroup mGroupMapType = this.findViewById(R.id.RadioGroupMapType);
@@ -843,48 +1032,90 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         inputPosBtn.setOnClickListener(v -> {
             AlertDialog dialog;
             AlertDialog.Builder builder = new AlertDialog.Builder(MainActivity.this);
-            builder.setTitle("请输入经度和纬度");
+            builder.setTitle("输入坐标");
             View view = LayoutInflater.from(MainActivity.this).inflate(R.layout.location_input, null);
             builder.setView(view);
             dialog = builder.show();
 
-            EditText dialog_lng = view.findViewById(R.id.joystick_longitude);
-            EditText dialog_lat = view.findViewById(R.id.joystick_latitude);
+            EditText coordinatePair = view.findViewById(R.id.coordinate_pair);
+            LinearLayout separateContainer = view.findViewById(R.id.coordinate_separate_container);
+            EditText dialogLng = view.findViewById(R.id.joystick_longitude);
+            EditText dialogLat = view.findViewById(R.id.joystick_latitude);
+            RadioGroup inputFormatGroup = view.findViewById(R.id.input_format_group);
             RadioButton rbBD = view.findViewById(R.id.pos_type_bd);
+
+            inputFormatGroup.setOnCheckedChangeListener((group, checkedId) -> {
+                boolean separate = checkedId == R.id.input_format_separate;
+                coordinatePair.setVisibility(separate ? View.GONE : View.VISIBLE);
+                separateContainer.setVisibility(separate ? View.VISIBLE : View.GONE);
+                if (!separate) {
+                    coordinatePair.setHint(checkedId == R.id.input_format_lng_lat
+                            ? "116.39135, 39.9073"
+                            : "39.9073, 116.39135");
+                }
+            });
+
+            // Auto-detect an unmistakable pair while the user types or pastes.
+            // If one value is > 90 degrees, it can only be longitude.
+            coordinatePair.addTextChangedListener(new TextWatcher() {
+                @Override
+                public void beforeTextChanged(CharSequence s, int start, int count, int after) { }
+
+                @Override
+                public void onTextChanged(CharSequence s, int start, int before, int count) { }
+
+                @Override
+                public void afterTextChanged(Editable s) {
+                    int selectedFormat = getSelectedInputFormat(inputFormatGroup.getCheckedRadioButtonId());
+                    if (selectedFormat == INPUT_FORMAT_SEPARATE) {
+                        return;
+                    }
+                    try {
+                        ManualCoordinate parsed = parseCombinedCoordinate(s.toString(), selectedFormat);
+                        if (parsed.unambiguous && parsed.format != selectedFormat) {
+                            inputFormatGroup.check(getInputFormatRadioId(parsed.format));
+                        }
+                    } catch (IllegalArgumentException ignored) {
+                        // The user may still be typing; validate fully on submit.
+                    }
+                }
+            });
 
             Button btnGo = view.findViewById(R.id.input_position_ok);
             btnGo.setOnClickListener(v2 -> {
-                String dialog_lng_str = dialog_lng.getText().toString();
-                String dialog_lat_str = dialog_lat.getText().toString();
-
-                if (TextUtils.isEmpty(dialog_lng_str) || TextUtils.isEmpty(dialog_lat_str)) {
-                    GoUtils.DisplayToast(MainActivity.this,getResources().getString(R.string.app_error_input));
-                } else {
-                    double dialog_lng_double = Double.parseDouble(dialog_lng_str);
-                    double dialog_lat_double = Double.parseDouble(dialog_lat_str);
-
-                    if (dialog_lng_double > 180.0 || dialog_lng_double < -180.0) {
-                        GoUtils.DisplayToast(MainActivity.this,  getResources().getString(R.string.app_error_longitude));
+                try {
+                    int selectedFormat = getSelectedInputFormat(inputFormatGroup.getCheckedRadioButtonId());
+                    ManualCoordinate coordinate;
+                    if (selectedFormat == INPUT_FORMAT_SEPARATE) {
+                        coordinate = parseSeparateCoordinate(
+                                dialogLng.getText().toString(),
+                                dialogLat.getText().toString());
                     } else {
-                        if (dialog_lat_double > 90.0 || dialog_lat_double < -90.0) {
-                            GoUtils.DisplayToast(MainActivity.this,  getResources().getString(R.string.app_error_latitude));
-                        } else {
-                            if (rbBD.isChecked()) {
-                                mMarkLatLngMap = new LatLng(dialog_lat_double, dialog_lng_double);
-                            } else {
-                                double[] bdLonLat = MapUtils.wgs2bd09(dialog_lat_double, dialog_lng_double);
-                                mMarkLatLngMap = new LatLng(bdLonLat[1], bdLonLat[0]);
-                            }
-                            mMarkName = "手动输入的坐标";
-
-                            markMap();
-
-                            MapStatusUpdate mapstatusupdate = MapStatusUpdateFactory.newLatLng(mMarkLatLngMap);
-                            mBaiduMap.setMapStatus(mapstatusupdate);
-
-                            dialog.dismiss();
+                        coordinate = parseCombinedCoordinate(
+                                coordinatePair.getText().toString(),
+                                selectedFormat);
+                        if (coordinate.unambiguous && coordinate.format != selectedFormat) {
+                            inputFormatGroup.check(getInputFormatRadioId(coordinate.format));
                         }
                     }
+
+                    if (coordinate.autoSwapped) {
+                        GoUtils.DisplayToast(MainActivity.this, "已自动交换经纬度");
+                    }
+
+                    if (rbBD.isChecked()) {
+                        setMarkFromBd09(coordinate.longitude, coordinate.latitude);
+                    } else {
+                        setMarkFromWgs84(coordinate.longitude, coordinate.latitude);
+                    }
+                    mMarkName = "手动输入的坐标";
+
+                    markMap();
+                    MapStatusUpdate mapstatusupdate = MapStatusUpdateFactory.newLatLng(mMarkLatLngMap);
+                    mBaiduMap.setMapStatus(mapstatusupdate);
+                    dialog.dismiss();
+                } catch (IllegalArgumentException e) {
+                    GoUtils.DisplayToast(MainActivity.this, e.getMessage());
                 }
             });
 
@@ -904,7 +1135,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
 
     private void resetMap() {
         mBaiduMap.clear();
-        mMarkLatLngMap = null;
+        clearMarkCoordinates();
 
         MyLocationData locData = new MyLocationData.Builder()
                 .latitude(mCurrentLat)
@@ -987,13 +1218,18 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
 //    }
 
     // 在地图上显示位置
-    public static boolean showLocation(String name, String bd09Longitude, String bd09Latitude) {
+    public static boolean showLocation(String name, String wgs84Longitude, String wgs84Latitude,
+                                       String bd09Longitude, String bd09Latitude) {
         boolean ret = true;
 
         try {
-            if (!bd09Longitude.isEmpty() && !bd09Latitude.isEmpty()) {
+            if (!wgs84Longitude.isEmpty() && !wgs84Latitude.isEmpty()
+                    && !bd09Longitude.isEmpty() && !bd09Latitude.isEmpty()) {
                 mMarkName = name;
-                mMarkLatLngMap = new LatLng(Double.parseDouble(bd09Latitude), Double.parseDouble(bd09Longitude));
+                mMarkLatLngWgs84 = new LatLng(Double.parseDouble(wgs84Latitude), Double.parseDouble(wgs84Longitude));
+                mMarkLatLngBd09 = new LatLng(Double.parseDouble(bd09Latitude), Double.parseDouble(bd09Longitude));
+                mMarkLatLngMap = isOutsideChina(mMarkLatLngWgs84.longitude, mMarkLatLngWgs84.latitude)
+                        ? mMarkLatLngWgs84 : mMarkLatLngBd09;
                 MarkerOptions ooA = new MarkerOptions().position(mMarkLatLngMap).icon(mMapIndicator);
                 mBaiduMap.clear();
                 mBaiduMap.addOverlay(ooA);
@@ -1016,7 +1252,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     private void startGoLocation() {
         Intent serviceGoIntent = new Intent(MainActivity.this, ServiceGo.class);
         bindService(serviceGoIntent, mConnection, BIND_AUTO_CREATE);    // 绑定服务和活动，之后活动就可以去调服务的方法了
-        double[] latLng = MapUtils.bd2wgs(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
+        double[] latLng = getMarkedWgs84();
         serviceGoIntent.putExtra(LNG_MSG_ID, latLng[0]);
         serviceGoIntent.putExtra(LAT_MSG_ID, latLng[1]);
         double alt = Double.parseDouble(sharedPreferences.getString("setting_altitude", "55.0"));
@@ -1059,7 +1295,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                         .setAction("Action", null).show();
                 mButtonStart.setImageResource(R.drawable.ic_position);
             } else {
-                double[] latLng = MapUtils.bd2wgs(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
+                double[] latLng = getMarkedWgs84();
                 double alt = Double.parseDouble(sharedPreferences.getString("setting_altitude", "55.0"));
                 mServiceBinder.setPosition(latLng[0], latLng[1], alt);
                 Snackbar.make(v, "已传送到新位置", Snackbar.LENGTH_LONG)
@@ -1068,7 +1304,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                 recordCurrentLocation(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
 
                 mBaiduMap.clear();
-                mMarkLatLngMap = null;
+                clearMarkCoordinates();
 
                 if (GoUtils.isWifiEnabled(MainActivity.this)) {
                     GoUtils.showDisableWifiDialog(MainActivity.this);
@@ -1090,7 +1326,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
 
                     recordCurrentLocation(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
                     mBaiduMap.clear();
-                    mMarkLatLngMap = null;
+                    clearMarkCoordinates();
 
                     if (GoUtils.isWifiEnabled(MainActivity.this)) {
                         GoUtils.showDisableWifiDialog(MainActivity.this);
@@ -1143,12 +1379,21 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
 
     // 记录请求的位置信息
     private void recordCurrentLocation(double lng, double lat) {
-        //参数坐标系：bd09
         final String safeCode = getResources().getString(R.string.safecode);
         final String ak = getResources().getString(R.string.ak);
-        double[] latLng = MapUtils.bd2wgs(lng, lat);
-        //bd09坐标的位置信息
-        String mapApiUrl = "https://api.map.baidu.com/reverse_geocoding/v3/?ak=" + ak + "&output=json&coordtype=bd09ll" + "&location=" + lat + "," + lng + "&mcode=" + safeCode;
+
+        ensureMarkCoordinateRepresentations();
+        double[] latLng = getMarkedWgs84();
+        final double historyLng = mMarkLatLngBd09 != null ? mMarkLatLngBd09.longitude : lng;
+        final double historyLat = mMarkLatLngBd09 != null ? mMarkLatLngBd09.latitude : lat;
+
+        // 百度地图/逆地理编码在海外应直接使用 WGS84；中国境内使用 BD09。
+        boolean overseas = isOutsideChina(latLng[0], latLng[1]);
+        String reverseCoordType = overseas ? "wgs84ll" : "bd09ll";
+        double reverseLng = overseas ? latLng[0] : historyLng;
+        double reverseLat = overseas ? latLng[1] : historyLat;
+        String mapApiUrl = "https://api.map.baidu.com/reverse_geocoding/v3/?ak=" + ak + "&output=json&coordtype="
+                + reverseCoordType + "&location=" + reverseLat + "," + reverseLng + "&mcode=" + safeCode;
 
         okhttp3.Request request = new okhttp3.Request.Builder().url(mapApiUrl).get().build();
         final Call call = mOkHttpClient.newCall(request);
@@ -1163,8 +1408,8 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                 contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84, String.valueOf(latLng[0]));
                 contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84, String.valueOf(latLng[1]));
                 contentValues.put(DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP, System.currentTimeMillis() / 1000);
-                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(lng));
-                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(lat));
+                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(historyLng));
+                contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(historyLat));
 
                 DataBaseHistoryLocation.saveHistoryLocation(mLocationHistoryDB, contentValues);
             }
@@ -1185,8 +1430,8 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                             contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84, String.valueOf(latLng[0]));
                             contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84, String.valueOf(latLng[1]));
                             contentValues.put(DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP, System.currentTimeMillis() / 1000);
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(lng));
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(lat));
+                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(historyLng));
+                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(historyLat));
                             DataBaseHistoryLocation.saveHistoryLocation(mLocationHistoryDB, contentValues);
                         } else {
                             ContentValues contentValues = new ContentValues();
@@ -1194,8 +1439,8 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                             contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84, String.valueOf(latLng[0]));
                             contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84, String.valueOf(latLng[1]));
                             contentValues.put(DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP, System.currentTimeMillis() / 1000);
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(lng));
-                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(lat));
+                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(historyLng));
+                            contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(historyLat));
                             DataBaseHistoryLocation.saveHistoryLocation(mLocationHistoryDB, contentValues);
                         }
                     } catch (JSONException e) {
@@ -1206,8 +1451,8 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                         contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_WGS84, String.valueOf(latLng[0]));
                         contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_WGS84, String.valueOf(latLng[1]));
                         contentValues.put(DataBaseHistoryLocation.DB_COLUMN_TIMESTAMP, System.currentTimeMillis() / 1000);
-                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(lng));
-                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(lat));
+                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LONGITUDE_CUSTOM, Double.toString(historyLng));
+                        contentValues.put(DataBaseHistoryLocation.DB_COLUMN_LATITUDE_CUSTOM, Double.toString(historyLat));
                         DataBaseHistoryLocation.saveHistoryLocation(mLocationHistoryDB, contentValues);
                     }
                 }
@@ -1225,14 +1470,14 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
             String lng = ((TextView) view.findViewById(R.id.poi_longitude)).getText().toString();
             String lat = ((TextView) view.findViewById(R.id.poi_latitude)).getText().toString();
             mMarkName = ((TextView) view.findViewById(R.id.poi_name)).getText().toString();
-            mMarkLatLngMap = new LatLng(Double.parseDouble(lat), Double.parseDouble(lng));
+            setMarkFromMapCoordinate(new LatLng(Double.parseDouble(lat), Double.parseDouble(lng)));
             MapStatusUpdate mapstatusupdate = MapStatusUpdateFactory.newLatLng(mMarkLatLngMap);
             mBaiduMap.setMapStatus(mapstatusupdate);
 
             markMap();
 
             // transformCoordinate(lng, lat);
-            double[] latLng = MapUtils.bd2wgs(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
+            double[] latLng = getMarkedWgs84();
 
             // mSearchList.setVisibility(View.GONE);
             //搜索历史 插表参数
@@ -1262,14 +1507,14 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                 String lng = ((TextView) view.findViewById(R.id.search_longitude)).getText().toString();
                 String lat = ((TextView) view.findViewById(R.id.search_latitude)).getText().toString();
                 // mMarkName = ((TextView) view.findViewById(R.id.poi_name)).getText().toString();
-                mMarkLatLngMap = new LatLng(Double.parseDouble(lat), Double.parseDouble(lng));
+                setMarkFromMapCoordinate(new LatLng(Double.parseDouble(lat), Double.parseDouble(lng)));
                 MapStatusUpdate mapstatusupdate = MapStatusUpdateFactory.newLatLng(mMarkLatLngMap);
                 mBaiduMap.setMapStatus(mapstatusupdate);
 
                 markMap();
 
                 // transformCoordinate(lng, lat);
-                double[] latLng = MapUtils.bd2wgs(mMarkLatLngMap.longitude, mMarkLatLngMap.latitude);
+                double[] latLng = getMarkedWgs84();
 
                 //设置列表不可见
                 mHistoryLayout.setVisibility(View.INVISIBLE);

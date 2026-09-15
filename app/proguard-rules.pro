@@ -29,3 +29,9 @@
 -dontwarn org.conscrypt.**
 -dontwarn org.bouncycastle.**
 -dontwarn org.openjsse.**
+
+# Custom 1.12.3 build: remove all calls to the built-in update checker.
+# Release builds have minifyEnabled=true, so R8 eliminates these void calls.
+-assumenosideeffects class com.zcshou.gogogo.MainActivity {
+    private void checkUpdateVersion(boolean);
+}
