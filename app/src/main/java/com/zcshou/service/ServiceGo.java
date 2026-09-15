@@ -166,6 +166,9 @@ public class ServiceGo extends Service {
                 mCurLng += disLng / (111.320 * Math.cos(Math.abs(mCurLat) * Math.PI / 180));
                 mCurLat += disLat / 110.574;
                 mCurBea = (float) angle;
+
+                // 摇杆移动后同步悬浮地图的当前坐标，避免再次打开地图时仍停留在旧位置。
+                mJoyStick.setCurrentPosition(mCurLng, mCurLat, mCurAlt);
             }
 
             @Override
@@ -173,6 +176,9 @@ public class ServiceGo extends Service {
                 mCurLng = lng;
                 mCurLat = lat;
                 mCurAlt = alt;
+
+                // 从悬浮地图或历史记录切换位置后，同步地图内部当前坐标。
+                mJoyStick.setCurrentPosition(mCurLng, mCurLat, mCurAlt);
             }
         });
         mJoyStick.show();
@@ -390,5 +396,4 @@ public class ServiceGo extends Service {
         }
     }
 }
-
 
