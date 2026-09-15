@@ -161,6 +161,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     private boolean mHasValidCurrentLocation = false;
     private double mCurrentLat = 0.0;       // 当前真实位置在百度地图上的纬度
     private double mCurrentLon = 0.0;       // 当前真实位置在百度地图上的经度
+    private LatLng mCurrentMockMapPosition = null; // 当前模拟位置在百度地图上的坐标
     private float mCurrentDirection = 0.0f;
     private boolean isFirstLoc = true; // 是否首次定位
     private boolean isMockServStart = false;
@@ -758,6 +759,9 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                         return;
                     }
                     if (isMockServStart) {
+                        // 模拟定位运行时，百度定位回调仍用于刷新地图上的蓝色定位点，
+                        // 但不要覆盖单独保存的真实位置。
+                        applyMockMapLocation(latitude, longitude, bdLocation.getRadius());
                         return;
                     }
 
@@ -824,6 +828,23 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
             return location.isMock();
         }
         return location.isFromMockProvider();
+    }
+
+    private void applyMockMapLocation(double latitude, double longitude, float accuracy) {
+        if (mBaiduMap == null || !isUsableLocation(longitude, latitude)) {
+            return;
+        }
+        mCurrentMockMapPosition = new LatLng(latitude, longitude);
+        MyLocationData data = new MyLocationData.Builder()
+                .accuracy(accuracy > 0.0f ? accuracy : 5.0f)
+                .direction(mCurrentDirection)
+                .latitude(latitude)
+                .longitude(longitude)
+                .build();
+        mBaiduMap.setMyLocationData(data);
+        MyLocationConfiguration configuration = new MyLocationConfiguration(
+                MyLocationConfiguration.LocationMode.NORMAL, true, null);
+        mBaiduMap.setMyLocationConfiguration(configuration);
     }
 
     private void applySystemRealLocation(Location location) {
@@ -1282,6 +1303,13 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     private void resetMap() {
         mBaiduMap.clear();
         clearMarkCoordinates();
+        if (isMockServStart && mCurrentMockMapPosition != null) {
+            applyMockMapLocation(mCurrentMockMapPosition.latitude, mCurrentMockMapPosition.longitude, 5.0f);
+            MapStatus.Builder builder = new MapStatus.Builder();
+            builder.target(mCurrentMockMapPosition).zoom(18.0f);
+            mBaiduMap.animateMapStatus(MapStatusUpdateFactory.newMapStatus(builder.build()));
+            return;
+        }
         if (!mHasValidCurrentLocation || !isUsableLocation(mCurrentLon, mCurrentLat)) {
             requestRealLocationRefresh();
             GoUtils.DisplayToast(this, getResources().getString(R.string.app_location_wait));
@@ -1401,6 +1429,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     private void startGoLocation() {
         Intent serviceGoIntent = new Intent(MainActivity.this, ServiceGo.class);
         bindService(serviceGoIntent, mConnection, BIND_AUTO_CREATE);    // 绑定服务和活动，之后活动就可以去调服务的方法了
+        LatLng initialMockMapPosition = mMarkLatLngMap;
         double[] latLng = getMarkedWgs84();
         serviceGoIntent.putExtra(LNG_MSG_ID, latLng[0]);
         serviceGoIntent.putExtra(LAT_MSG_ID, latLng[1]);
@@ -1412,6 +1441,9 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
 
         isMockServStart = true;
         stopSystemLocationFallback();
+        if (initialMockMapPosition != null) {
+            applyMockMapLocation(initialMockMapPosition.latitude, initialMockMapPosition.longitude, 5.0f);
+        }
     }
 
     private void stopGoLocation() {
@@ -1419,6 +1451,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         Intent serviceGoIntent = new Intent(MainActivity.this, ServiceGo.class);
         stopService(serviceGoIntent);
         isMockServStart = false;
+        mCurrentMockMapPosition = null;
         requestRealLocationRefresh();
     }
 
@@ -1446,9 +1479,13 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                         .setAction("Action", null).show();
                 mButtonStart.setImageResource(R.drawable.ic_position);
             } else {
+                LatLng newMockMapPosition = mMarkLatLngMap;
                 double[] latLng = getMarkedWgs84();
                 double alt = Double.parseDouble(sharedPreferences.getString("setting_altitude", "55.0"));
                 mServiceBinder.setPosition(latLng[0], latLng[1], alt);
+                if (newMockMapPosition != null) {
+                    applyMockMapLocation(newMockMapPosition.latitude, newMockMapPosition.longitude, 5.0f);
+                }
                 Snackbar.make(v, "已传送到新位置", Snackbar.LENGTH_LONG)
                         .setAction("Action", null).show();
 
