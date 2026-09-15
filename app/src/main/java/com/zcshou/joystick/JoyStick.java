@@ -150,9 +150,34 @@ public class JoyStick extends View {
         }
     }
 
+    // 百度地图 SDK 在中国境内使用 BD09，海外地区直接使用 WGS84。
+    // 与主界面的坐标判断保持一致，避免日本等海外地区出现地图位置偏移。
+    private static boolean isOutsideChina(double lng, double lat) {
+        boolean eastAsiaOverseas = lng >= 122.5 && lng <= 146.5 && lat >= 20.0 && lat <= 46.5;
+        return eastAsiaOverseas
+                || (lng < 72.004 || lng > 137.8347)
+                || (lat < 0.8293 || lat > 55.8271);
+    }
+
+    private static LatLng wgs84ToMapCoordinate(double lng, double lat) {
+        if (isOutsideChina(lng, lat)) {
+            return new LatLng(lat, lng);
+        }
+
+        double[] bdLonLat = MapUtils.wgs2bd09(lng, lat);
+        return new LatLng(bdLonLat[1], bdLonLat[0]);
+    }
+
+    private static double[] mapCoordinateToWgs84(LatLng point) {
+        if (isOutsideChina(point.longitude, point.latitude)) {
+            return new double[] {point.longitude, point.latitude};
+        }
+
+        return MapUtils.bd2wgs(point.longitude, point.latitude);
+    }
+
     public void setCurrentPosition(double lng, double lat, double alt) {
-        double[] lngLat = MapUtils.wgs2bd09(lng, lat);
-        mCurMapLngLat = new LatLng(lngLat[1], lngLat[0]);
+        mCurMapLngLat = wgs84ToMapCoordinate(lng, lat);
         mAltitude = alt;
 
         resetBaiduMap();
@@ -488,7 +513,7 @@ public class JoyStick extends View {
         });
         mSearchView.setOnCloseListener(() -> {
             tips.setVisibility(VISIBLE);
-            mSearchLayout.setVisibility(GONE);
+            mSearchLayout.setVisibility(View.GONE);
 
             // 关闭时清除焦点
             mWindowParamCurrent.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -517,7 +542,7 @@ public class JoyStick extends View {
                         e.printStackTrace();
                     }
                 } else {
-                    mSearchLayout.setVisibility(GONE);
+                    mSearchLayout.setVisibility(View.GONE);
                 }
 
                 return true;
@@ -543,7 +568,7 @@ public class JoyStick extends View {
                     mCurMapLngLat = mMarkMapLngLat;
                     mMarkMapLngLat = null;
 
-                    double[] lngLat = MapUtils.bd2wgs(mCurMapLngLat.longitude, mCurMapLngLat.latitude);
+                    double[] lngLat = mapCoordinateToWgs84(mCurMapLngLat);
                     mListener.onPositionInfo(lngLat[0], lngLat[1], mAltitude);
 
                     resetBaiduMap();
@@ -562,7 +587,7 @@ public class JoyStick extends View {
                     | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN;
 
             tips.setVisibility(VISIBLE);
-            mSearchLayout.setVisibility(GONE);
+            mSearchLayout.setVisibility(View.GONE);
             mSearchView.clearFocus();
             mSearchView.onActionViewCollapsed();
 
@@ -728,16 +753,13 @@ public class JoyStick extends View {
             String[] wgs84latLngStr = wgs84LatLng.split(" ");
             String wgs84Longitude = wgs84latLngStr[0].substring(wgs84latLngStr[0].indexOf(':') + 1);
             String wgs84Latitude = wgs84latLngStr[1].substring(wgs84latLngStr[1].indexOf(':') + 1);
+            double wgsLongitude = Double.parseDouble(wgs84Longitude);
+            double wgsLatitude = Double.parseDouble(wgs84Latitude);
 
-            mListener.onPositionInfo(Double.parseDouble(wgs84Longitude), Double.parseDouble(wgs84Latitude), mAltitude);
+            mListener.onPositionInfo(wgsLongitude, wgsLatitude, mAltitude);
 
-            // 注意这里在选择位置之后需要刷新地图
-            String bdLatLng = (String) ((TextView) view.findViewById(R.id.BDLatLngText)).getText();
-            bdLatLng = bdLatLng.substring(bdLatLng.indexOf('[') + 1, bdLatLng.indexOf(']'));
-            String[] bdLatLngStr = bdLatLng.split(" ");
-            String bdLongitude = bdLatLngStr[0].substring(bdLatLngStr[0].indexOf(':') + 1);
-            String bdLatitude = bdLatLngStr[1].substring(bdLatLngStr[1].indexOf(':') + 1);
-            mCurMapLngLat = new LatLng(Double.parseDouble(bdLatitude), Double.parseDouble(bdLongitude));
+            // 悬浮地图同样按中国境内 BD09 / 海外 WGS84 的规则恢复当前位置。
+            mCurMapLngLat = wgs84ToMapCoordinate(wgsLongitude, wgsLatitude);
 
             GoUtils.DisplayToast(mContext, getResources().getString(R.string.app_location_ok));
         });
