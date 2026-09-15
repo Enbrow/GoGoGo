@@ -1,5 +1,6 @@
 package com.zcshou.gogogo;
 
+import android.Manifest;
 import android.app.DownloadManager;
 import android.content.BroadcastReceiver;
 import android.content.ClipData;
@@ -11,15 +12,20 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.ServiceConnection;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.os.Looper;
 import android.provider.Settings;
 import android.text.Editable;
 import android.text.SpannableStringBuilder;
@@ -150,8 +156,11 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     private final float[] mDirectionValues = new float[3];//模拟方向传感器的数据（原始数据为弧度）
     /************** 定位 *****************/
     private LocationClient mLocClient = null;
-    private double mCurrentLat = 0.0;       // 当前位置的百度纬度
-    private double mCurrentLon = 0.0;       // 当前位置的百度经度
+    private LocationManager mSystemLocationManager = null;
+    private LocationListener mSystemLocationListener = null;
+    private boolean mHasValidCurrentLocation = false;
+    private double mCurrentLat = 0.0;       // 当前真实位置在百度地图上的纬度
+    private double mCurrentLon = 0.0;       // 当前真实位置在百度地图上的经度
     private float mCurrentDirection = 0.0f;
     private boolean isFirstLoc = true; // 是否首次定位
     private boolean isMockServStart = false;
@@ -229,6 +238,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     protected void onPause() {
         XLog.i("MainActivity: onPause");
         mMapView.onPause();
+        stopSystemLocationFallback();
         mSensorManager.unregisterListener(this);
         super.onPause();
     }
@@ -237,6 +247,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     protected void onResume() {
         XLog.i("MainActivity: onResume");
         mMapView.onResume();
+        startSystemLocationFallback();
         mSensorManager.registerListener(this, mSensorAccelerometer, SensorManager.SENSOR_DELAY_UI);
         mSensorManager.registerListener(this, mSensorMagnetic, SensorManager.SENSOR_DELAY_UI);
         super.onResume();
@@ -262,6 +273,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         unregisterReceiver(mDownloadBdRcv);
 
         mSensorManager.unregisterListener(this);
+        stopSystemLocationFallback();
 
         // 退出时销毁定位
         mLocClient.stop();
@@ -734,33 +746,41 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
                         return;
                     }
 
+                    int err = bdLocation.getLocType();
+                    double latitude = bdLocation.getLatitude();
+                    double longitude = bdLocation.getLongitude();
+                    boolean success = err == BDLocation.TypeGpsLocation
+                            || err == BDLocation.TypeNetWorkLocation
+                            || err == BDLocation.TypeOffLineLocation;
+                    if (!success || !isUsableLocation(longitude, latitude)) {
+                        XLog.w("Ignore invalid Baidu location: type=" + err);
+                        mLocClient.requestLocation();
+                        return;
+                    }
+                    if (isMockServStart) {
+                        return;
+                    }
+
                     mCurrentCity = bdLocation.getCity();
-                    mCurrentLat = bdLocation.getLatitude();
-                    mCurrentLon = bdLocation.getLongitude();
+                    mCurrentLat = latitude;
+                    mCurrentLon = longitude;
+                    mHasValidCurrentLocation = true;
                     MyLocationData locData = new MyLocationData.Builder()
                             .accuracy(bdLocation.getRadius())
-                            .direction(mCurrentDirection)// 此处设置开发者获取到的方向信息，顺时针0-360
-                            .latitude(bdLocation.getLatitude())
-                            .longitude(bdLocation.getLongitude()).build();
+                            .direction(mCurrentDirection)
+                            .latitude(latitude)
+                            .longitude(longitude).build();
                     mBaiduMap.setMyLocationData(locData);
                     MyLocationConfiguration configuration = new MyLocationConfiguration(MyLocationConfiguration.LocationMode.NORMAL, true, null);
                     mBaiduMap.setMyLocationConfiguration(configuration);
 
-                    /* 如果出现错误，则需要重新请求位置 */
-                    int err = bdLocation.getLocType();
-                    if (err == BDLocation.TypeCriteriaException || err == BDLocation.TypeNetWorkException) {
-                        mLocClient.requestLocation();   /* 请求位置 */
-                    } else {
-                        if (isFirstLoc) {
-                            isFirstLoc = false;
-                            // 这里记录百度地图返回的位置
-                            setMarkFromMapCoordinate(new LatLng(bdLocation.getLatitude(), bdLocation.getLongitude()));
-                            MapStatus.Builder builder = new MapStatus.Builder();
-                            builder.target(mMarkLatLngMap).zoom(18.0f);
-                            mBaiduMap.animateMapStatus(MapStatusUpdateFactory.newMapStatus(builder.build()));
-
-                            XLog.i("First Baidu LatLng: " + mMarkLatLngMap);
-                        }
+                    if (isFirstLoc) {
+                        isFirstLoc = false;
+                        setMarkFromMapCoordinate(new LatLng(latitude, longitude));
+                        MapStatus.Builder builder = new MapStatus.Builder();
+                        builder.target(mMarkLatLngMap).zoom(18.0f);
+                        mBaiduMap.animateMapStatus(MapStatusUpdateFactory.newMapStatus(builder.build()));
+                        XLog.i("First Baidu LatLng: " + mMarkLatLngMap);
                     }
                 }
                 /**
@@ -783,8 +803,134 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
             mLocClient.setLocOption(locationOption);
             //开始定位
             mLocClient.start();
+            startSystemLocationFallback();
         } catch (Exception e) {
             XLog.e("ERROR: initMapLocation");
+        }
+    }
+
+    private static boolean isUsableLocation(double longitude, double latitude) {
+        if (!Double.isFinite(longitude) || !Double.isFinite(latitude)) {
+            return false;
+        }
+        if (longitude < -180.0 || longitude > 180.0 || latitude < -90.0 || latitude > 90.0) {
+            return false;
+        }
+        return Math.abs(longitude) > 0.000001 || Math.abs(latitude) > 0.000001;
+    }
+
+    private static boolean isMockSystemLocation(Location location) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            return location.isMock();
+        }
+        return location.isFromMockProvider();
+    }
+
+    private void applySystemRealLocation(Location location) {
+        if (location == null || isMockServStart || isMockSystemLocation(location)
+                || !isUsableLocation(location.getLongitude(), location.getLatitude())) {
+            return;
+        }
+        double longitude = location.getLongitude();
+        double latitude = location.getLatitude();
+        LatLng mapPoint;
+        if (isOutsideChina(longitude, latitude)) {
+            mapPoint = new LatLng(latitude, longitude);
+        } else {
+            double[] bd = MapUtils.wgs2bd09(longitude, latitude);
+            mapPoint = new LatLng(bd[1], bd[0]);
+        }
+        mCurrentLat = mapPoint.latitude;
+        mCurrentLon = mapPoint.longitude;
+        mHasValidCurrentLocation = true;
+        MyLocationData data = new MyLocationData.Builder()
+                .accuracy(location.hasAccuracy() ? location.getAccuracy() : 20.0f)
+                .direction(mCurrentDirection)
+                .latitude(mapPoint.latitude)
+                .longitude(mapPoint.longitude).build();
+        mBaiduMap.setMyLocationData(data);
+        if (isFirstLoc) {
+            isFirstLoc = false;
+            setMarkFromMapCoordinate(mapPoint);
+            mBaiduMap.animateMapStatus(MapStatusUpdateFactory.newMapStatus(
+                    new MapStatus.Builder().target(mapPoint).zoom(18.0f).build()));
+        }
+    }
+
+    private void startSystemLocationFallback() {
+        if (isMockServStart) {
+            return;
+        }
+        if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
+                && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        if (mSystemLocationManager == null) {
+            mSystemLocationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        }
+        if (mSystemLocationManager == null) {
+            return;
+        }
+        if (mSystemLocationListener == null) {
+            mSystemLocationListener = this::applySystemRealLocation;
+        }
+        stopSystemLocationFallback();
+        Location best = null;
+        try {
+            Location gps = mSystemLocationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+            Location net = mSystemLocationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+            if (gps != null && !isMockSystemLocation(gps) && isUsableLocation(gps.getLongitude(), gps.getLatitude())) {
+                best = gps;
+            }
+            if (net != null && !isMockSystemLocation(net) && isUsableLocation(net.getLongitude(), net.getLatitude())
+                    && (best == null || net.getTime() > best.getTime())) {
+                best = net;
+            }
+        } catch (Exception e) {
+            XLog.w("Unable to read last known location");
+        }
+        if (best != null) {
+            applySystemRealLocation(best);
+        }
+        try {
+            if (mSystemLocationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                mSystemLocationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 0.0f,
+                        mSystemLocationListener, Looper.getMainLooper());
+            }
+        } catch (Exception e) {
+            XLog.w("Unable to request GPS location updates");
+        }
+        try {
+            if (mSystemLocationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                mSystemLocationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 1000L, 0.0f,
+                        mSystemLocationListener, Looper.getMainLooper());
+            }
+        } catch (Exception e) {
+            XLog.w("Unable to request network location updates");
+        }
+    }
+
+    private void stopSystemLocationFallback() {
+        if (mSystemLocationManager != null && mSystemLocationListener != null) {
+            try {
+                mSystemLocationManager.removeUpdates(mSystemLocationListener);
+            } catch (Exception e) {
+                XLog.w("Unable to stop system location updates");
+            }
+        }
+    }
+
+    private void requestRealLocationRefresh() {
+        if (isMockServStart) {
+            return;
+        }
+        startSystemLocationFallback();
+        try {
+            if (mLocClient != null) {
+                mLocClient.requestLocation();
+            }
+        } catch (Exception e) {
+            XLog.w("Unable to request Baidu location refresh");
         }
     }
 
@@ -1136,14 +1282,17 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
     private void resetMap() {
         mBaiduMap.clear();
         clearMarkCoordinates();
-
+        if (!mHasValidCurrentLocation || !isUsableLocation(mCurrentLon, mCurrentLat)) {
+            requestRealLocationRefresh();
+            GoUtils.DisplayToast(this, getResources().getString(R.string.app_location_wait));
+            return;
+        }
         MyLocationData locData = new MyLocationData.Builder()
                 .latitude(mCurrentLat)
                 .longitude(mCurrentLon)
                 .direction(mCurrentDirection)
                 .build();
         mBaiduMap.setMyLocationData(locData);
-
         MapStatus.Builder builder = new MapStatus.Builder();
         builder.target(new LatLng(mCurrentLat, mCurrentLon)).zoom(18.0f);
         mBaiduMap.animateMapStatus(MapStatusUpdateFactory.newMapStatus(builder.build()));
@@ -1262,6 +1411,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         XLog.d("startForegroundService: ServiceGo");
 
         isMockServStart = true;
+        stopSystemLocationFallback();
     }
 
     private void stopGoLocation() {
@@ -1269,6 +1419,7 @@ public class MainActivity extends BaseActivity implements SensorEventListener {
         Intent serviceGoIntent = new Intent(MainActivity.this, ServiceGo.class);
         stopService(serviceGoIntent);
         isMockServStart = false;
+        requestRealLocationRefresh();
     }
 
     private void doGoLocation(View v) {
